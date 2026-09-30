@@ -14,6 +14,11 @@ void connection_loop_write_handler(void *ptr)
     assert(ptr != NULL);
 
     xps_connection_t *connection = ptr;
+    if(connection->write_buff_list->len == 0)
+    {
+        logger(LOG_DEBUG, "xps_connection_write_handler()", "no data to write");
+        return;
+    }
 
     xps_buffer_t *buffer = xps_buffer_list_read(connection->write_buff_list, connection->write_buff_list->len);
 
@@ -100,7 +105,7 @@ xps_connection_t *xps_connection_create(xps_core_t *core, int sock_fd)
     }
 
     // xps_loop_attach(epoll_fd, sock_fd, EPOLLIN);
-    xps_loop_attach(core->loop, sock_fd, EPOLLIN, connection, connection_loop_read_handler, connection_loop_write_handler, connection_loop_close_handler);
+    xps_loop_attach(core->loop, sock_fd, EPOLLIN | EPOLLOUT, connection, connection_loop_read_handler, connection_loop_write_handler, connection_loop_close_handler);
 
     connection->core = core;
     connection->sock_fd = sock_fd;
