@@ -3,35 +3,51 @@
 void listener_connection_handler(void *ptr)
 {
     assert(ptr != NULL);
+
     xps_listener_t *listener = ptr;
 
     struct sockaddr conn_addr;
     socklen_t conn_addr_len = sizeof(conn_addr);
 
-    int conn_sock_fd = accept(listener->sock_fd, &conn_addr, &conn_addr_len);
-    if (conn_sock_fd < 0)
+    while (1)
     {
-        logger(LOG_ERROR, "xps_listener_connection_handler()", "accept() failed");
-        perror("Error message");
-        return;
-    }
+        int conn_sock_fd = accept(listener->sock_fd, &conn_addr, &conn_addr_len);
+        if (conn_sock_fd < 0)
+        {
+            if ((errno == EAGAIN || errno == EWOULDBLOCK))
+            {
+                break;
+            }
+            logger(LOG_ERROR, "xps_listener_connection_handler()", "accept() failed");
+            perror("Error message");
+            break;
+        }
+        if (make_socket_non_blocking(conn_sock_fd) != OK)
+        {
+            return;
+        }
 
-    if (make_socket_non_blocking(conn_sock_fd) != OK)
-    {
-        return;
-    }
+        xps_connection_t *client = xps_connection_create(listener->core, conn_sock_fd);
+        if (client == NULL)
+        {
+            logger(LOG_ERROR, "xps_listener_connection_handler()", "xps_connection_create() failed");
+            close(conn_sock_fd);
+            return;
+        }
 
-    xps_connection_t *client = xps_connection_create(listener->core, conn_sock_fd);
-    if (client == NULL)
-    {
-        logger(LOG_ERROR, "xps_listener_connection_handler()", "xps_connection_create() failed");
-        close(conn_sock_fd);
-        return;
-    }
-    client->listener = listener;
+        // Creates pipe for the connection created
+        xps_pipe_t *pipe = xps_pipe_create(listener->core, DEFAULT_PIPE_BUFF_THRESH, client->source, client->sink);
+        if (!pipe)
+        {
+            logger(LOG_ERROR, "xps_listener_connection_handler()", "pipe creation failed");
+            return;
+        }
 
-    logger(LOG_INFO, "xps_listener_connection_handler()", "new connection");
-}  
+        client->listener = listener;
+
+        logger(LOG_INFO, "xps_listener_connection_handler()", "new connection");
+    }
+}
 
 xps_listener_t *xps_listener_create(xps_core_t *core, const char *host, u_int port)
 {
@@ -99,8 +115,7 @@ xps_listener_t *xps_listener_create(xps_core_t *core, const char *host, u_int po
     listener->port = port;
     listener->sock_fd = sock_fd;
 
-    // xps_loop_attach(epoll_fd, sock_fd, EPOLLIN);
-    xps_loop_attach(core->loop, sock_fd, EPOLLIN, listener, listener_connection_handler, NULL, NULL);
+    xps_loop_attach(core->loop, sock_fd, EPOLLIN | EPOLLET, listener, listener_connection_handler, NULL, NULL);
 
     vec_push(&(core->listeners), listener);
 
@@ -131,4 +146,3 @@ void xps_listener_destroy(xps_listener_t *listener)
     logger(LOG_DEBUG, "xps_listener_destroy()", "destroyed listener on port %d", listener->port);
     free(listener);
 }
-
